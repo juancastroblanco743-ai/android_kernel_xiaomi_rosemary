@@ -1,68 +1,59 @@
-name: Compilacion Kernel Evolution Rosemary con SUSFS Completo
+name: CI Automatizado con SUSFS
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
-    runs-on: ubuntu-22.04
+  build-kernel:
+    name: Build Kernel Rosemary
+    runs-on: ubuntu-20.04
     steps:
-    - name: Descargar Codigo Fuente del Kernel
-      uses: actions/checkout@v4
+      - name: Configurar Entorno e Inyectar Parches SUSFS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip git
+          
+          # Crear una carpeta temporal para descargar el codigo fuente de rosemary
+          git clone --depth=1 -b 13.0 https://github.com $GITHUB_WORKSPACE/kernel-source
+          cd $GITHUB_WORKSPACE/kernel-source
+          
+          # Descargar los parches oficiales de SUSFS 4.14
+          wget https://gitlab.com
+          unzip susfs4ksu-kernel-4.14.zip
+          
+          # Colocar los archivos en sus carpetas correspondientes
+          cp susfs4ksu-kernel-4.14/kernel_patches/fs/susfs.c ./fs/ || true
+          cp susfs4ksu-kernel-4.14/kernel_patches/include/linux/susfs.h ./include/linux/ || true
+          
+          # Aplicar las modificaciones de codigo de camuflaje
+          patch -p1 < susfs4ksu-kernel-4.14/kernel_patches/50_add_susfs_in_kernel-4.14.patch || true
+          
+          if [ -d "kernelsu" ]; then
+            cd kernelsu && patch -p1 < ../susfs4ksu-kernel-4.14/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true && cd ..
+          fi
+          
+          # Encender las banderas en el archivo defconfig para que salgan en VERDE
+          echo "CONFIG_KSU_SUSFS_SUS_MAPS=y" >> arch/arm64/configs/rosemary_defconfig
+          echo "CONFIG_KSU_SUSFS_OVERLAYFS_AUTO_KSTAT=y" >> arch/arm64/configs/rosemary_defconfig
+          
+          # Mover todo el codigo parchado a la ruta limpia que usara el compilador externo
+          mkdir -p $GITHUB_WORKSPACE/patched-kernel
+          cp -r * $GITHUB_WORKSPACE/patched-kernel/
 
-    - name: Configurar Entorno de Compilacion
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev libelf-dev bison flex acpica-tools libltdl-dev wget unzip git cpio python2 python3
-
-    - name: Descargar Herramientas de Compilacion (Clang Rosemary Oficial)
-      run: |
-        mkdir -p $GITHUB_WORKSPACE/clang
-        cd $GITHUB_WORKSPACE/clang
-        wget https://googlesource.com
-        tar -xf clang-r383902.tar.gz
-
-    - name: Descargar e Inyectar Parches de Ocultamiento SUSFS (Rama 4.14)
-      run: |
-        cd $GITHUB_WORKSPACE
-        wget https://gitlab.com
-        unzip susfs4ksu-kernel-4.14.zip
-        
-        # Mover los archivos que subiste a las carpetas del compilador
-        cp susfs.c ./fs/ || true
-        cp susfs.h ./include/linux/ || true
-        
-        # Aplicar parches al nucleo de linux 4.14
-        patch -p1 < susfs4ksu-kernel-4.14/kernel_patches/50_add_susfs_in_kernel-4.14.patch || true
-        
-        # Detectar de forma segura si la carpeta de KernelSU es con mayuscula o minuscula
-        if [ -d "KernelSU" ]; then
-          cd KernelSU && patch -p1 < ../susfs4ksu-kernel-4.14/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true && cd ..
-        elif [ -d "kernelsu" ]; then
-          cd kernelsu && patch -p1 < ../susfs4ksu-kernel-4.14/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true && cd ..
-        fi
-
-    - name: Forzar Encendido de Mapas y OverlayFS en el Config (Verde)
-      run: |
-        cd $GITHUB_WORKSPACE
-        echo "CONFIG_KSU_SUSFS_SUS_MAPS=y" >> arch/arm64/configs/rosemary_defconfig
-        echo "CONFIG_KSU_SUSFS_OVERLAYFS_AUTO_KSTAT=y" >> arch/arm64/configs/rosemary_defconfig
-
-    - name: Compilar el Kernel (Generar Image.gz-dtb)
-      run: |
-        cd $GITHUB_WORKSPACE
-        export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
-        export ARCH=arm64
-        export SUBARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export CC=clang
-        export KCFLAGS="-w"
-        
-        make O=out rosemary_defconfig
-        make -j$(nproc) O=out || true
-
-    - name: Subir Archivo Compilado como Artefacto
-      uses: actions/upload-artifact@v4
-      with:
-        name: Kernel-Evolution-SUSFS-Rosemary
-        path: out/arch/arm64/boot/Image.gz-dtb
+      - name: Ejecutar Constructor de Android
+        uses: dabao1955/kernel_build_action@main
+        with:
+          kernel-url: local
+          kernel-dir: patched-kernel
+          config: rosemary_defconfig
+          arch: arm64
+          aosp-gcc: true
+          aosp-clang: true
+          android-version: 12
+          aosp-clang-version: r383902
+          anykernel3: true
+          release: true
+          access-token: ${{ secrets.GITHUB_TOKEN }}
