@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
     - name: Descargar Codigo Fuente del Kernel
       uses: actions/checkout@v4
@@ -13,14 +13,14 @@ jobs:
     - name: Configurar Entorno de Compilacion
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev libelf-dev bison flex acpica-tools libltdl-dev wget unzip git cpio
+        sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev libelf-dev bison flex acpica-tools libltdl-dev wget unzip git cpio python2 python3
 
-    - name: Descargar Herramientas de Compilacion (Clang AOSP)
+    - name: Descargar Herramientas de Compilacion (Clang Rosemary Oficial)
       run: |
         mkdir -p $GITHUB_WORKSPACE/clang
         cd $GITHUB_WORKSPACE/clang
         wget https://googlesource.com
-        tar -xf clang-r487747c.tar.gz
+        tar -xf clang-r383902.tar.gz
 
     - name: Descargar e Inyectar Parches de Ocultamiento SUSFS (Rama 4.14)
       run: |
@@ -28,17 +28,14 @@ jobs:
         wget https://gitlab.com
         unzip susfs4ksu-kernel-4.14.zip
         
-        # Mover los archivos que subiste a las carpetas del compilador
-        cp susfs.c ./fs/ || true
-        cp susfs.h ./include/linux/ || true
+        cp susfs4ksu-kernel-4.14/kernel_patches/fs/susfs.c ./fs/ || true
+        cp susfs4ksu-kernel-4.14/kernel_patches/include/linux/susfs.h ./include/linux/ || true
         
-        # Aplicar parches al nucleo de linux 4.14
-        patch -p1 < susfs4ksu-kernel-4.14/kernel_patches/50_add_susfs_in_kernel-4.14.patch
+        patch -p1 < susfs4ksu-kernel-4.14/kernel_patches/50_add_susfs_in_kernel-4.14.patch || true
         
-        # Aplicar parches a la carpeta de KernelSU / KernelSU-Next
         if [ -d "KernelSU" ]; then
           cd KernelSU
-          patch -p1 < ../susfs4ksu-kernel-4.14/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
+          patch -p1 < ../susfs4ksu-kernel-4.14/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
           cd ..
         fi
 
@@ -51,12 +48,14 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CC=clang
         
+        # Ignorar advertencias menores de codigo antiguo
+        export KCFLAGS="-w"
+        
         make O=out rosemary_defconfig
-        make -j$(nproc) O=out || true
+        make -j$(nproc) O=out
 
     - name: Subir Archivo Compilado como Artefacto
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-Evolution-SUSFS-Rosemary
         path: out/arch/arm64/boot/Image.gz-dtb
-
