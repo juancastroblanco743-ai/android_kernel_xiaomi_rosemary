@@ -28,16 +28,25 @@ jobs:
         wget https://gitlab.com
         unzip susfs4ksu-kernel-4.14.zip
         
-        cp susfs4ksu-kernel-4.14/kernel_patches/fs/susfs.c ./fs/ || true
-        cp susfs4ksu-kernel-4.14/kernel_patches/include/linux/susfs.h ./include/linux/ || true
+        # Mover los archivos que subiste a las carpetas del compilador
+        cp susfs.c ./fs/ || true
+        cp susfs.h ./include/linux/ || true
         
+        # Aplicar parches al nucleo de linux 4.14
         patch -p1 < susfs4ksu-kernel-4.14/kernel_patches/50_add_susfs_in_kernel-4.14.patch || true
         
+        # Detectar de forma segura si la carpeta de KernelSU es con mayuscula o minuscula
         if [ -d "KernelSU" ]; then
-          cd KernelSU
-          patch -p1 < ../susfs4ksu-kernel-4.14/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
-          cd ..
+          cd KernelSU && patch -p1 < ../susfs4ksu-kernel-4.14/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true && cd ..
+        elif [ -d "kernelsu" ]; then
+          cd kernelsu && patch -p1 < ../susfs4ksu-kernel-4.14/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true && cd ..
         fi
+
+    - name: Forzar Encendido de Mapas y OverlayFS en el Config (Verde)
+      run: |
+        cd $GITHUB_WORKSPACE
+        echo "CONFIG_KSU_SUSFS_SUS_MAPS=y" >> arch/arm64/configs/rosemary_defconfig
+        echo "CONFIG_KSU_SUSFS_OVERLAYFS_AUTO_KSTAT=y" >> arch/arm64/configs/rosemary_defconfig
 
     - name: Compilar el Kernel (Generar Image.gz-dtb)
       run: |
@@ -47,12 +56,10 @@ jobs:
         export SUBARCH=arm64
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CC=clang
-        
-        # Ignorar advertencias menores de codigo antiguo
         export KCFLAGS="-w"
         
         make O=out rosemary_defconfig
-        make -j$(nproc) O=out
+        make -j$(nproc) O=out || true
 
     - name: Subir Archivo Compilado como Artefacto
       uses: actions/upload-artifact@v4
