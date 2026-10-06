@@ -1,0 +1,69 @@
+cat << 'EOF' > .github/workflows/build.yml
+name: Compilacion Kernel Evolution Rosemary con SUSFS Completo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Descargar Codigo Fuente del Kernel
+      uses: actions/checkout@v4
+
+    - name: Configurar Entorno de Compilacion
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev libelf-dev bison flex acpica-tools libltdl-dev wget unzip git
+
+    - name: Descargar Herramientas de Compilacion (Clang AOSP)
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/clang
+        cd $GITHUB_WORKSPACE/clang
+        wget https://googlesource.com
+        tar -xf clang-r487747c.tar.gz
+
+    - name: Descargar e Inyectar Parches de Ocultamiento SUSFS (Rama 4.14)
+      run: |
+        cd $GITHUB_WORKSPACE
+        wget https://gitlab.com
+        unzip susfs4ksu-kernel-4.14.zip
+        
+        # Copiar archivos base
+        cp susfs4ksu-kernel-4.14/kernel_patches/fs/susfs.c ./fs/
+        cp susfs4ksu-kernel-4.14/kernel_patches/include/linux/susfs.h ./include/linux/
+        
+        # Aplicar parches al nucleo de linux
+        patch -p1 < susfs4ksu-kernel-4.14/kernel_patches/50_add_susfs_in_kernel-4.14.patch
+        
+        # Aplicar parches a la carpeta de KernelSU / KernelSU-Next
+        if [ -d "KernelSU" ]; then
+          cd KernelSU
+          patch -p1 < ../susfs4ksu-kernel-4.14/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
+          cd ..
+        fi
+
+    - name: Forzar Encendido de Mapas y OverlayFS en el Config (Verde)
+      run: |
+        cd $GITHUB_WORKSPACE
+        echo "CONFIG_KSU_SUSFS_SUS_MAPS=y" >> arch/arm64/configs/rosemary_defconfig
+        echo "CONFIG_KSU_SUSFS_OVERLAYFS_AUTO_KSTAT=y" >> arch/arm64/configs/rosemary_defconfig
+
+    - name: Compilar el Kernel (Generar Image.gz-dtb)
+      run: |
+        cd $GITHUB_WORKSPACE
+        export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        export CC=clang
+        
+        make O=out rosemary_defconfig
+        make -j$(nproc) O=out
+
+    - name: Subir Archivo Compilado como Artefacto
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel-Evolution-SUSFS-Rosemary
+        path: out/arch/arm64/boot/Image.gz-dtb
+EOF
